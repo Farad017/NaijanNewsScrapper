@@ -7,7 +7,6 @@ import random
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
-# We use r.jina.ai to bypass Nairaland's firewall and get its native RSS feed
 PROXY_URL = "https://r.jina.ai/https://www.nairaland.com/feed"
 SEEN_FILE = "seen_urls.json"
 
@@ -22,8 +21,9 @@ def save_seen_urls(urls):
         json.dump(list(urls), f)
 
 def fetch_topics():
+    # THE FIX: Use a neutral User-Agent for r.jina.ai
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     }
     
@@ -38,9 +38,7 @@ def fetch_topics():
 
     topics = []
     
-    # Parse the XML data
     try:
-        # We look for the RSS items in the text
         root = ET.fromstring(response.text)
         for item in root.findall('./channel/item'):
             title = item.findtext('title', '')
@@ -61,7 +59,6 @@ def fetch_topics():
 
     print(f"Found {len(topics)} links from the Nairaland feed.")
     
-    # Remove duplicates within this batch
     unique_topics = []
     seen_in_batch = set()
     for t in topics:
