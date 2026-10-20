@@ -1,14 +1,16 @@
 import requests
+from bs4 import BeautifulSoup
 import json
 import os
 import re
 import time
 import random
 from datetime import datetime
-from urllib.parse import quote
 
+# We switch from Google to Bing
 SEARCH_QUERY = "site:nairaland.com"
-GOOGLE_URL = f"https://www.google.com/search?q={quote(SEARCH_QUERY)}&tbs=qdr:d&num=50"
+BING_URL = f"https://www.bing.com/search?q={SEARCH_QUERY}&filters=ex1%3a%22ez1%22" # ez1 = Past 24 hours
+
 SEEN_FILE = "seen_urls.json"
 
 USER_AGENTS = [
@@ -26,9 +28,8 @@ def save_seen_urls(urls):
     with open(SEEN_FILE, 'w') as f:
         json.dump(list(urls), f)
 
-def fetch_from_google():
-    # Wait to avoid rate limits
-    time.sleep(random.uniform(2, 5))
+def fetch_from_bing():
+    time.sleep(random.uniform(1, 3))
     
     headers = {
         'User-Agent': random.choice(USER_AGENTS),
@@ -36,48 +37,39 @@ def fetch_from_google():
     }
     
     try:
-        print(f"Fetching from Google: {GOOGLE_URL}")
-        response = requests.get(GOOGLE_URL, headers=headers, timeout=15)
+        print(f"Fetching from Bing: {BING_URL}")
+        response = requests.get(BING_URL, headers=headers, timeout=15)
         response.raise_for_status()
-        print(f"Successfully fetched Google! Status code: {response.status_code}")
+        print(f"Successfully fetched Bing! Status code: {response.status_code}")
     except Exception as e:
-        print(f"ERROR fetching Google: {e}")
+        print(f"ERROR fetching Bing: {e}")
         return []
 
-    html_content = response.text
+    soup = BeautifulSoup(response.text, 'html.parser')
     topics = []
 
-    # This regex searches the raw HTML for any Nairaland frontpage link
-    # It looks for nairaland.com/ followed by numbers, a slash, and a title (e.g., nairaland.com/1234567/some-topic)
-    pattern = r'(https?://[a-zA-Z0-9\.]*nairaland\.com/\d+/[a-z0-9\-]+)(?:&|"|\'|<|\s|$)'
-    
-    matches = re.findall(pattern, html_content, re.IGNORECASE)
-    
-    print(f"Found {len(matches)} potential Nairaland links in raw HTML.")
-
-    for url in matches:
-        # Clean up the URL (remove any Google tracking at the end)
-        clean_url = url.split('&')[0].strip()
-        
-        # Sometimes Google wraps the URLs, let's make sure it's a direct link
-        if not clean_url.startswith("http"):
+    # Bing uses <li class="b_algo"> for search results
+    for result in soup.find_all('li', class_='b_algo'):
+        link_element = result.find('a', href=True)
+        if not link_element:
             continue
             
-        # Extract a basic title from the URL for now
-        # (e.g., https://www.nairaland.com/1234567/some-topic becomes "Some Topic")
-        url_parts = clean_url.split('/')
-        if len(url_parts) >= 5:
-            raw_title = url_parts[-1] # gets "some-topic"
-            title = raw_title.replace('-', ' ').title()
-        else:
-            title = "Nairaland Topic"
+        href = link_element['href']
+        title = link_element.get_text(strip=True)
+        
+        # Filter for frontpage topics only (ends with number/title, no /2 replies)
+        if 'nairaland.com' in href and re.search(r'nairaland\.com/\d+/[a-z0-9\-]+$', href.lower()):
+            # Clean URL just in case
+            clean_url = href.split('?')[0]
+            
+            topics.append({
+                'title': title,
+                'link': clean_url,
+                'pubDate': datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
+            })
 
-        topics.append({
-            'title': title,
-            'link': clean_url,
-            'pubDate': datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
-        })
-
+    print(f"Found {len(topics)} valid Nairaland frontpage links on Bing.")
+    
     # Remove duplicates within this batch
     unique_topics = []
     seen_in_batch = set()
@@ -90,7 +82,7 @@ def fetch_from_google():
 
 def main():
     seen_urls = get_seen_urls()
-    new_topics = fetch_from_google()
+    new_topics = fetch_from_bing()
 
     fresh_topics = []
     for topic in new_topics:
