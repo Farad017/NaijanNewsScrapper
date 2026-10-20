@@ -1,5 +1,4 @@
 import requests
-from bs4 import BeautifulSoup
 import json
 import os
 import re
@@ -8,17 +7,13 @@ import random
 from datetime import datetime
 from urllib.parse import quote
 
-# We use your exact Google Search URL for the past day on Nairaland
 SEARCH_QUERY = "site:nairaland.com"
-GOOGLE_URL = f"https://www.google.com/search?q={quote(SEARCH_QUERY)}&tbs=qdr:d"
-
+GOOGLE_URL = f"https://www.google.com/search?q={quote(SEARCH_QUERY)}&tbs=qdr:d&num=50"
 SEEN_FILE = "seen_urls.json"
 
-# Rotate these to look like different browsers
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
 ]
 
 def get_seen_urls():
@@ -32,8 +27,8 @@ def save_seen_urls(urls):
         json.dump(list(urls), f)
 
 def fetch_from_google():
-    # Wait a random time between 2 and 6 seconds before requesting to avoid rate limits
-    time.sleep(random.uniform(2, 6))
+    # Wait to avoid rate limits
+    time.sleep(random.uniform(2, 5))
     
     headers = {
         'User-Agent': random.choice(USER_AGENTS),
@@ -49,36 +44,40 @@ def fetch_from_google():
         print(f"ERROR fetching Google: {e}")
         return []
 
-    soup = BeautifulSoup(response.text, 'html.parser')
+    html_content = response.text
     topics = []
 
-    # Google search results are usually wrapped in an <a> tag containing an <h3> (the title)
-    for link in soup.find_all('a', href=True):
-        href = link['href']
-        title_element = link.find('h3')
-        
-        # If it has a title and links to nairaland
-        if title_element and 'nairaland.com' in href:
-            title = title_element.get_text(strip=True)
-            
-            # --- THE FILTER ---
-            # We ONLY want the main frontpage topics. 
-            # Frontpage topics look like: https://www.nairaland.com/1234567/topic-name
-            # They should NOT have a trailing reply page (like /2, /3) or be a profile, etc.
-            
-            # This regex ensures the URL ends with a number and a title, with nothing after it
-            if re.search(r'nairaland\.com/\d+/[a-z0-9\-]+$', href.lower()):
-                # Clean up the URL just in case Google added tracking parameters
-                clean_url = href.split('&')[0]
-                
-                topics.append({
-                    'title': title,
-                    'link': clean_url,
-                    'pubDate': datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
-                })
-
-    print(f"Found {len(topics)} valid Nairaland frontpage links on Google.")
+    # This regex searches the raw HTML for any Nairaland frontpage link
+    # It looks for nairaland.com/ followed by numbers, a slash, and a title (e.g., nairaland.com/1234567/some-topic)
+    pattern = r'(https?://[a-zA-Z0-9\.]*nairaland\.com/\d+/[a-z0-9\-]+)(?:&|"|\'|<|\s|$)'
     
+    matches = re.findall(pattern, html_content, re.IGNORECASE)
+    
+    print(f"Found {len(matches)} potential Nairaland links in raw HTML.")
+
+    for url in matches:
+        # Clean up the URL (remove any Google tracking at the end)
+        clean_url = url.split('&')[0].strip()
+        
+        # Sometimes Google wraps the URLs, let's make sure it's a direct link
+        if not clean_url.startswith("http"):
+            continue
+            
+        # Extract a basic title from the URL for now
+        # (e.g., https://www.nairaland.com/1234567/some-topic becomes "Some Topic")
+        url_parts = clean_url.split('/')
+        if len(url_parts) >= 5:
+            raw_title = url_parts[-1] # gets "some-topic"
+            title = raw_title.replace('-', ' ').title()
+        else:
+            title = "Nairaland Topic"
+
+        topics.append({
+            'title': title,
+            'link': clean_url,
+            'pubDate': datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
+        })
+
     # Remove duplicates within this batch
     unique_topics = []
     seen_in_batch = set()
