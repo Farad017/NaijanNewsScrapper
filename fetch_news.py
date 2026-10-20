@@ -1,22 +1,15 @@
 import requests
-from bs4 import BeautifulSoup
 import json
 import os
 import re
 import time
 import random
+import xml.etree.ElementTree as ET
 from datetime import datetime
 
-# We switch from Google to Bing
-SEARCH_QUERY = "site:nairaland.com"
-BING_URL = f"https://www.bing.com/search?q={SEARCH_QUERY}&filters=ex1%3a%22ez1%22" # ez1 = Past 24 hours
-
+# We use r.jina.ai to bypass Nairaland's firewall and get its native RSS feed
+PROXY_URL = "https://r.jina.ai/https://www.nairaland.com/feed"
 SEEN_FILE = "seen_urls.json"
-
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
-]
 
 def get_seen_urls():
     if os.path.exists(SEEN_FILE):
@@ -28,47 +21,45 @@ def save_seen_urls(urls):
     with open(SEEN_FILE, 'w') as f:
         json.dump(list(urls), f)
 
-def fetch_from_bing():
-    time.sleep(random.uniform(1, 3))
-    
+def fetch_topics():
     headers = {
-        'User-Agent': random.choice(USER_AGENTS),
-        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     }
     
     try:
-        print(f"Fetching from Bing: {BING_URL}")
-        response = requests.get(BING_URL, headers=headers, timeout=15)
+        print(f"Fetching from proxy: {PROXY_URL}")
+        response = requests.get(PROXY_URL, headers=headers, timeout=30)
         response.raise_for_status()
-        print(f"Successfully fetched Bing! Status code: {response.status_code}")
+        print(f"Successfully fetched proxy! Status code: {response.status_code}")
     except Exception as e:
-        print(f"ERROR fetching Bing: {e}")
+        print(f"ERROR fetching proxy: {e}")
         return []
 
-    soup = BeautifulSoup(response.text, 'html.parser')
     topics = []
-
-    # Bing uses <li class="b_algo"> for search results
-    for result in soup.find_all('li', class_='b_algo'):
-        link_element = result.find('a', href=True)
-        if not link_element:
-            continue
+    
+    # Parse the XML data
+    try:
+        # We look for the RSS items in the text
+        root = ET.fromstring(response.text)
+        for item in root.findall('./channel/item'):
+            title = item.findtext('title', '')
+            link = item.findtext('link', '')
+            pub_date = item.findtext('pubDate', datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000'))
             
-        href = link_element['href']
-        title = link_element.get_text(strip=True)
-        
-        # Filter for frontpage topics only (ends with number/title, no /2 replies)
-        if 'nairaland.com' in href and re.search(r'nairaland\.com/\d+/[a-z0-9\-]+$', href.lower()):
-            # Clean URL just in case
-            clean_url = href.split('?')[0]
-            
-            topics.append({
-                'title': title,
-                'link': clean_url,
-                'pubDate': datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
-            })
+            if title and link:
+                topics.append({
+                    'title': title,
+                    'link': link,
+                    'pubDate': pub_date
+                })
+    except Exception as e:
+        print(f"Error parsing XML: {e}")
+        print("The proxy might have returned a non-XML page. Here is the first 200 characters:")
+        print(response.text[:200])
+        return []
 
-    print(f"Found {len(topics)} valid Nairaland frontpage links on Bing.")
+    print(f"Found {len(topics)} links from the Nairaland feed.")
     
     # Remove duplicates within this batch
     unique_topics = []
@@ -82,7 +73,7 @@ def fetch_from_bing():
 
 def main():
     seen_urls = get_seen_urls()
-    new_topics = fetch_from_bing()
+    new_topics = fetch_topics()
 
     fresh_topics = []
     for topic in new_topics:
